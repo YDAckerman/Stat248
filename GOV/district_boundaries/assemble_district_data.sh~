@@ -1,0 +1,5 @@
+#!/bin/bash
+
+for zipfile in $(ls | grep .zip); do
+    echo $zipfile
+done

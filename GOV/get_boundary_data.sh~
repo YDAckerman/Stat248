@@ -1,0 +1,5 @@
+#!/bin/bash
+
+while read yr; do
+
+done < year.txt    

@@ -1,0 +1,3 @@
+* ideas:
+ - look at size of districts
+ - also look at voter turnout in each district

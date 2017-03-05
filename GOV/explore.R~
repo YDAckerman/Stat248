@@ -1,0 +1,35 @@
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(reshape2)
+
+load("dataverse_files/all_data.rda")
+
+pData$state <- as.character(pData$state)
+pData$ofCenter <- pData$sen_rep_in_sess - pData$sen_dem_in_sess
+pData$del <- c(NA, diff(pData$ofCenter))
+ggplot(pData) +
+    geom_line(aes(x = year, y = del, group = state, color = state))
+
+ggplot(pData %>% dplyr::filter(state == "California")) +
+    geom_line(aes(x = year, y = ofCenter, group = state, color = state))
+
+## create a dataframe just with "ofCenter" variable
+cData <- dcast(pData, state ~ year, value.var = "ofCenter")
+cData <- cData[,!unlist(llply(cData, function(col){all(is.na(col))}))]
+
+nation <- colSums(cData[,-1], na.rm = TRUE)
+
+qplot(x = as.numeric(colnames(cData)[-1]), y = nation, geom = "line")
+
+qplot(1:(length(nation)-1), diff(nation), geom = "line")
+
+plot(lm(diff(nation) ~ 1)$residuals) ## heteroskedasticity... gerrymandering?
+
+## find ccf of each state's ts w/
+testState <- cData %>% dplyr::filter(state == "California")
+i <- which(is.na(testState))
+ret <- ccf(unlist(testState[,-c(i,1)]), nation[-i],
+    type = "correlation")
+
+
