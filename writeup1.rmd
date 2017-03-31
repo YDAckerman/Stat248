@@ -1,0 +1,114 @@
+---
+title: "Project Proposal"
+author: "Yoni Ackerman"
+output: pdf_document
+---
+
+```{r, echo = FALSE, warn = FALSE}
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(reshape2)
+library(raster)
+
+col_diff <- function(df, col){
+    df[, paste0(col, "_diff")] <- c(NA, diff(df[,col]))
+    df
+}
+
+load("all_data.rda")
+load("district_boundaries/dData.rda")
+```
+
+# Data
+
+I will be analyzing a political dataset assembled from multiple governmental and
+academic sources. The data are as follows:
+
+## State Congress Party Membership
+### source: [link](https://dataverse.harvard.edu/)
+
+These are yearly data collected from each state in the union between 1939 and 2015,
+inclusive. The available data are organized by year, state, and election year, and
+present 96 other cofactors related to that state's government, house and senate,
+in that year. Of particular interest to me are variables counting the number
+of Republican, Democrat, Independent, Vacant and Total seats in each chamber of
+congress. To get an idea of what these data look like, we can examine just
+the state senates and how "right" or "left" of center they are:
+
+```{r, echo = FALSE, fig.cap = "Yearly State Congress Party Distribution"}
+pData <- pData %>%
+    dplyr::mutate(
+        state = as.character(state),
+        ofCenter = sen_rep_in_sess - sen_dem_in_sess 
+        ) %>%
+    dplyr::filter(state != "Nebraska") ## I've always hated the Cornhuskers.
+
+pData <- ddply(pData, .(state), function(df){
+    df <- df %>% dplyr::arrange(year)
+    df <- col_diff(df, "ofCenter")
+})
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = ofCenter, group = state, color = state)) +
+    theme(legend.position="none")
+```
+
+## District Shapefile Data
+### source: [link](http://cdmaps.polisci.ucla.edu/)
+
+These are yearly data that describe the geographical shape and extent of
+every State Congressional District in the union, as well as the congress
+at the time the data were collected. My goal is to intersect each district's
+polygon with it's future polygon's in the future to measure (i) the extent
+of the spatial change from year to year and (ii) the cumuluative change over
+the course of all measured years. I do not yet have the intersection script
+working (I'm not very familiar with R's functionality for spatial data), but
+I can present a substitute: yearly area measurements for each district.
+
+```{r, echo = FALSE, fig.cap = "Changes in congression district area for the state of Iowa, by Congress"}
+
+tmp <- dData %>%
+    dplyr::filter(state == "Iowa")
+
+ggplot(tmp, aes(x = strt_cng, y = area_sqkm, group = district, color = district)) +
+	    geom_line() +
+	    theme(legend.position="none")	
+```
+
+## District Demographic Data
+### source: [link](https://sites.google.com/a/colorado.edu/adler-scott/data)
+
+These data provide yearly demographic measurements for all state congressional
+districts in the union, such as total population, number employed, and presence
+of a nuclear plant. I am mainly interested in the total population for each
+district:
+
+```{r, echo = FALSE, fig.cap = "Changes In Total Population for Congressional Districts in Iowa, by Congress"}
+
+tmp <- dPopData %>%
+    dplyr::filter(STATE == "IA")
+
+ggplot(tmp, aes(x = CONGRESS, y = POPULATN, group = CD, color = CD)) +
+	    geom_line() +
+	    theme(legend.position="none")	   
+```
+
+# Objectives
+
+I will analyze how decisions to change or maintain congressional districts
+have changed over the past century. Redistricting occurs every 10 years and the lines
+are drawn by members of the state congress, thus trends in state congressional
+affiliation, as well as prior knowledge of each district's demographics, may
+contain both predictive, and explanatory results.
+
+# Anticipated Analysis
+
+So far,
+I anticipate using autoregressive models to describe changes in state congress, then
+using the residuals from those models. I'd like to then perform frequency analysis
+on the 10-year segments of these residuals, as well as on the timeseries as a whole,
+with the goal of finding frequencies that, in conjunction with demographic data,
+can predict which districts will change and by how much. I would also like to model
+the changes in state congresses with an ARMA model with poisson error and see
+if the data support the assumption of stationarity.

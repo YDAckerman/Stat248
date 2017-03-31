@@ -1,2 +1,19 @@
-args = commandArgs(trailingOnly=TRUE)
+library(raster)
+library(plyr)
 
+shps <- list.files("districtShapes/", pattern = ".shp", full.names = TRUE)
+
+dData <- ldply(2:length(shps), function(i){
+    x1 <- shapefile(shps[[i-1]])
+    x2 <- shapefile(shps[[i]])
+    x$area_sqkm <- area(x) / 1000000
+    data.frame(state = x$STATENAME,
+               id = x$ID,
+               district = x$DISTRICT,
+               strt_cng = x$STARTCONG,
+               end_cng = x$ENDCONG,
+               area_sqkm = x$area_sqkm
+               )
+}, .progress = "text")
+
+save(dData, file = "dData.rda")

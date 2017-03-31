@@ -1,3 +1,5 @@
 * ideas:
  - look at size of districts
  - also look at voter turnout in each district
+ - look at difference between convex hull of districts
+   and districts themselves

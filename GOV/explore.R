@@ -26,7 +26,7 @@ pData <- ddply(pData, .(state), function(df){
 })
 
 ggplot(pData) +
-    geom_line(aes(x = year, y = ofCenter_diff, group = state, color = state))
+    geom_line(aes(x = year, y = ofCenter, group = state, color = state))
 
 ## I suspect the distribution from year to year is ~poisson, but that
 ## the mean decreases as year increases.
@@ -66,8 +66,6 @@ testState <- cData %>% dplyr::filter(state == "California")
 i <- which(is.na(testState))
 ret <- ccf(unlist(testState[,-c(i,1)]), nation[-i],
     type = "correlation")
-
-
 
 
 ## I'm going to standardize each row of cData, then place all the
