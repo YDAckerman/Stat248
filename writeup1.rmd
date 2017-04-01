@@ -42,7 +42,7 @@ pData <- pData %>%
         state = as.character(state),
         ofCenter = sen_rep_in_sess - sen_dem_in_sess 
         ) %>%
-    dplyr::filter(state != "Nebraska") ## I've always hated the Cornhuskers.
+    dplyr::filter(state != "Nebraska")
 
 pData <- ddply(pData, .(state), function(df){
     df <- df %>% dplyr::arrange(year)

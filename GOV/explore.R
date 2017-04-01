@@ -3,6 +3,7 @@ library(plyr)
 library(ggplot2)
 library(reshape2)
 library(raster)
+library(TSA)
 
 load("dataverse_files/all_data.rda")
 
@@ -16,93 +17,158 @@ col_diff <- function(df, col){
 pData <- pData %>%
     dplyr::mutate(
         state = as.character(state),
-        ofCenter = sen_rep_in_sess - sen_dem_in_sess 
+        sen_of_center = sen_rep_in_sess - sen_dem_in_sess,
+        hs_of_center = hs_rep_in_sess - hs_dem_in_sess
         ) %>%
-    dplyr::filter(state != "Nebraska") ## I've always hated the Cornhuskers.
+    dplyr::filter(state != "Nebraska" & ## Data is no good for this state
+                  year >= 1945 &
+                  year <= 2011) 
+
 
 pData <- ddply(pData, .(state), function(df){
     df <- df %>% dplyr::arrange(year)
-    df <- col_diff(df, "ofCenter")
-})
+    df <- col_diff(df, "sen_of_center")
+    df <- col_diff(df, "hs_of_center")
+}) %>%
+    dplyr::mutate(sen_of_center_diff = sen_of_center_diff / sen_tot_in_sess,
+                  hs_of_center_diff = hs_of_center_diff / hs_tot_in_sess)
 
 ggplot(pData) +
-    geom_line(aes(x = year, y = ofCenter, group = state, color = state))
+    geom_line(aes(x = year, y = sen_of_center, group = state, color = state))
 
-## I suspect the distribution from year to year is ~poisson, but that
-## the mean decreases as year increases.
-ggplot(pData, aes(x = abs(ofCenter_diff), group = year, color = year)) +
-    geom_density()
-## not very informative...
+ggplot(pData) +
+    geom_line(aes(x = year, y = hs_of_center, group = state, color = state))
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = govparty_c, group = state, color = state))
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = sen_elections_this_year,
+                  group = state, color = state))
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = hs_elections_this_year,
+                  group = state, color = state))
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = divided_gov,
+                  group = state, color = state))
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = sen_prop_up,
+                  group = state, color = state))
+
+ggplot(pData) +
+    geom_line(aes(x = year, y = hs_prop_up,
+                  group = state, color = state))
+
 
 
 ## just in CA
 ggplot(pData %>% dplyr::filter(state == "California")) +
-    geom_line(aes(x = year, y = ofCenter, group = state, color = state))
+    geom_line(aes(x = year, y = sen_of_center, group = state, color = state))
 
-## look at the distribution of changes for a single year:
-tmp <- pData %>%
-    dplyr::filter(year == 2010) %>%
-    dplyr::mutate(del = abs(del)) %>%
-    dplyr::select(del)
-qplot(tmp$del, geom = "density")
-
-ggplot(pData, aes(x = year, y = abs(ofCenter_diff), group = year)) +
-    geom_boxplot()
-
-## create a dataframe just with "ofCenter" variable
-cData <- dcast(pData, state ~ year, value.var = "ofCenter")
+## create a dataframe just with "sen_of_center" variable
+cData <- dcast(pData, state ~ year, value.var = "sen_of_center")
 cData <- cData[,!unlist(llply(cData, function(col){all(is.na(col))}))]
 
-nation <- colSums(cData[,-1], na.rm = TRUE)
+## look at distances between states' records
+dists <- dist(cData[,-1])
+heatmap(as.matrix(dists))
 
-qplot(x = as.numeric(colnames(cData)[-1]), y = nation, geom = "line")
 
-qplot(1:(length(nation)-1), diff(nation), geom = "line")
-
-plot(lm(diff(nation) ~ 1)$residuals) ## heteroskedasticity... gerrymandering?
-
-## find ccf of each state's ts w/
-testState <- cData %>% dplyr::filter(state == "California")
-i <- which(is.na(testState))
-ret <- ccf(unlist(testState[,-c(i,1)]), nation[-i],
+ret <- ccf(unlist(ca[,-c(i,1)]), nation[-i],
     type = "correlation")
 
+## let's look at each state's acf:
+ca <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state == "California") %>%
+    dplyr::filter(!is.na(sen_of_center))
 
-## I'm going to standardize each row of cData, then place all the
-## rows end to end. After that I'm going to high-pass filter and
-## fft - looking for frequencies.
+tx <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state == "Texas") %>%
+    dplyr::filter(!is.na(sen_of_center))
 
-## unlist(llply(1:nrow(cData), function(i){
-##     row <- unlist(cData[i, -1])
-##     max((seq_along(row))[is.na(row)])
-## })) ## this tells us 1950 is a decent column for cut-off
+ia <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state == "Iowa") %>%
+    dplyr::filter(!is.na(sen_of_center))
 
-## tmp <- ldply(1:nrow(cData), function(i){
-##     row <- unlist(cData[i,16:77])
-##     row <- rev(row)
-##     row <- row[!is.na(row)][cumsum(!is.na(row))]
-##     row <- rev(row)
-##     data.frame(state = cData[i, "state"],
-##                ofCenter = scale(row),
-##                diff = c(NA, scale(diff(row))))
-## })
 
-## tmp$t <- 1:nrow(tmp)
+ggplot(ia, aes(x = year)) +
+    ## geom_line(aes(y = hs_of_center), color = "red") +
+    geom_line(aes(y = hs_of_center_diff), color = "red", linetype = "dotted") +
+    ## geom_line(aes(y = sen_of_center), color = "blue") +
+    geom_line(aes(y = sen_of_center_diff), color = "blue", linetype = "dotted") 
 
-## qplot(x = t, y = ofCenter, data = tmp, geom = "line")
-## qplot(x = t, y = diff, data = tmp, geom = "line")
+par(mfrow=c(2,1))
 
-## ## from http://www.di.fc.ul.pt/~jpn/r/fourier/fourier.html
-## plot.frequency.spectrum <- function(X.k, xlimits=c(0,length(X.k))) {
-##   plot.data  <- cbind(0:(length(X.k)-1), Mod(X.k))
-##   # TODO: why this scaling is necessary?
-##   plot.data[2:length(X.k),2] <- 2*plot.data[2:length(X.k), 2] 
-##   plot(plot.data, t="h", lwd=2, main="", 
-##        xlab="Frequency (Hz)", ylab="Strength", 
-##        xlim=xlimits, ylim=c(0,max(Mod(plot.data[,2]))))
-## }
+acf(na.omit(tx$hs_of_center_diff), main = "", ylab = "")
+acf(na.omit(tx$sen_of_center_diff), main = "", ylab = "")
 
-## X <- na.omit(ifelse(abs(tmp$diff) > 2, 1, 0))
-## plot(X)
+acf(na.omit(ia$hs_of_center_diff), main = "", ylab = "")
+acf(na.omit(ia$sen_of_center_diff), main = "", ylab = "")
 
-## plot.frequency.spectrum(fft())
+acf(na.omit(ca$hs_of_center_diff), main = "", ylab = "")
+acf(na.omit(ca$sen_of_center_diff), main = "", ylab = "")
+
+
+
+## look at acf's of all states together:
+acfData <- ddply(pData, .(state), function(dat){
+    ts <- dat %>%
+        dplyr::arrange(year)
+    sen_acf <- acf(na.omit(ts$sen_of_center_diff), plot = FALSE)
+    hs_acf <- acf(na.omit(ts$hs_of_center_diff), plot = FALSE)
+    sen_hs_ccf <- ccf(na.omit(ts$hs_of_center_diff),
+                      na.omit(ts$sen_of_center_diff),
+                      plot = FALSE)
+    types <- rep(c("sen_acf", "hs_acf", "sen_hs_ccf"),
+                 c(length(sen_acf$lag),
+                   length(hs_acf$lag),
+                   length(sen_hs_ccf$lag)))
+    data.frame(state = unique(dat$state),
+               type =  types,
+               lag = c(sen_acf$lag, hs_acf$lag, sen_hs_ccf$lag),
+               acf = c(sen_acf$acf, hs_acf$acf, sen_hs_ccf$acf),
+               sd_line = 1.96 / sqrt(length(na.omit(ts$hs_of_center_dif)))
+               )
+})
+
+ggplot(acfData, aes(x = lag, y = acf, group = lag)) +
+    geom_boxplot() +
+    geom_hline(aes(yintercept = -min(sd_line)), linetype = "dashed",
+               color = "blue") +
+    geom_hline(aes(yintercept = min(sd_line)), linetype = "dashed",
+               color = "blue") +
+    facet_grid(~type, scales = "free")
+
+## let's attache their significances:
+acfData <- ddply(pData, .(state), function(dat){
+    ts <- dat %>%
+        dplyr::arrange(year)
+    sen_acf <- acf(na.omit(ts$sen_of_center_diff), plot = FALSE)
+    hs_acf <- acf(na.omit(ts$hs_of_center_diff), plot = FALSE)
+    sen_hs_ccf <- ccf(na.omit(ts$hs_of_center_diff),
+                      na.omit(ts$sen_of_center_diff),
+                      plot = FALSE)
+    types <- rep(c("sen_acf", "hs_acf", "sen_hs_ccf"),
+                 c(length(sen_acf$lag),
+                   length(hs_acf$lag),
+                   length(sen_hs_ccf$lag)))
+    sd2 <- 1.96 / sqrt(length(na.omit(ts$hs_of_center_dif)))
+    acfs <- c(sen_acf$acf, hs_acf$acf, sen_hs_ccf$acf)
+    sigs <- acfs > sd2 | acfs < -sd2
+    data.frame(state = unique(dat$state),
+               type =  types,
+               lag = c(sen_acf$lag, hs_acf$lag, sen_hs_ccf$lag),
+               acf = acfs,
+               sig = sigs)
+})
+
+ggplot(acfData %>% dplyr::filter(sig == TRUE),
+       aes(x = lag, y = acf, group = lag, color = state)) +
+    geom_point() +
+    facet_grid(~type, scales = "free")
