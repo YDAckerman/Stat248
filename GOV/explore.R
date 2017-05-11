@@ -6,6 +6,7 @@ library(raster)
 library(TSA)
 
 load("dataverse_files/all_data.rda")
+load("district_boundaries/dData.rda")
 
 ## little helper function
 col_diff <- function(df, col){
@@ -21,6 +22,7 @@ pData <- pData %>%
         hs_of_center = hs_rep_in_sess - hs_dem_in_sess
         ) %>%
     dplyr::filter(state != "Nebraska" & ## Data is no good for this state
+                  state != "Hawaii" & ## district data is odd for this state
                   year >= 1945 &
                   year <= 2011) 
 
@@ -69,13 +71,13 @@ ggplot(pData %>% dplyr::filter(state == "California")) +
     geom_line(aes(x = year, y = sen_of_center, group = state, color = state))
 
 ## create a dataframe just with "sen_of_center" variable
-cData <- dcast(pData, state ~ year, value.var = "sen_of_center")
+cData <- pData %>%
+    dplyr::mutate(perc_of_center = sen_of_center / sen_tot_in_sess)
+cData <- dcast(cData, state ~ year, value.var = "perc_of_center")
 cData <- cData[,!unlist(llply(cData, function(col){all(is.na(col))}))]
 
-## look at distances between states' records
 dists <- dist(cData[,-1])
 heatmap(as.matrix(dists))
-
 
 ret <- ccf(unlist(ca[,-c(i,1)]), nation[-i],
     type = "correlation")
@@ -86,9 +88,14 @@ ca <- pData %>%
     dplyr::filter(state == "California") %>%
     dplyr::filter(!is.na(sen_of_center))
 
-tx <- pData %>%
+il <- pData %>%
     dplyr::arrange(year) %>%
-    dplyr::filter(state == "Texas") %>%
+    dplyr::filter(state == "Illinois") %>%
+    dplyr::filter(!is.na(sen_of_center))
+
+nc <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state == "North Carolina") %>%
     dplyr::filter(!is.na(sen_of_center))
 
 ia <- pData %>%
@@ -96,12 +103,18 @@ ia <- pData %>%
     dplyr::filter(state == "Iowa") %>%
     dplyr::filter(!is.na(sen_of_center))
 
-
-ggplot(ia, aes(x = year)) +
-    ## geom_line(aes(y = hs_of_center), color = "red") +
-    geom_line(aes(y = hs_of_center_diff), color = "red", linetype = "dotted") +
-    ## geom_line(aes(y = sen_of_center), color = "blue") +
-    geom_line(aes(y = sen_of_center_diff), color = "blue", linetype = "dotted") 
+selectStates <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state %in% c("California", "Illinois",
+                               "North Carolina", "Iowa") %>%
+    dplyr::filter(!is.na(sen_of_center))
+                  
+ggplot(selectStates, aes(x = year)) +
+    geom_line(aes(y = hs_of_center_diff),
+              color = "red", linetype = "dotted") +
+    geom_line(aes(y = sen_of_center_diff),
+              color = "blue", linetype = "dotted") +
+        facet_grid(~state)
 
 par(mfrow=c(2,1))
 
@@ -172,3 +185,40 @@ ggplot(acfData %>% dplyr::filter(sig == TRUE),
        aes(x = lag, y = acf, group = lag, color = state)) +
     geom_point() +
     facet_grid(~type, scales = "free")
+
+
+## look at volatility of the series?
+
+## Now let's look at district data:
+
+## supposedly the most gerrymandered district:
+ncD <- dData %>%
+    dplyr::mutate(strt_cng = as.numeric(strt_cng),
+                  end_cng = as.numeric(end_cng)) %>%
+    dplyr::filter(state == "North Carolina")
+
+ggplot(ncD, aes(x = strt_cng, y = perimeter_ratio,
+                color = district, group = district)) +
+      geom_line()
+
+ilD <- dData %>%
+    dplyr::mutate(strt_cng = as.numeric(strt_cng),
+                  end_cng = as.numeric(end_cng)) %>%
+    dplyr::filter(state == "Illinois")
+
+ggplot(ilD, aes(x = strt_cng, y = hull_ratio,
+                color = district, group = district)) +
+      geom_line()
+
+tmp <- dData %>%
+    dplyr::filter(state != "Hawaii" & state != "Nebraska") %>%
+    dplyr::mutate(strt_cng = as.numeric(strt_cng),
+                  end_cng = as.numeric(end_cng)) %>%
+    dplyr::group_by(state, strt_cng, end_cng) %>%
+    dplyr::summarize(proxy_p = max(perimeter_ratio, na.rm = TRUE), 
+                     proxy_a = max(hull_ratio, na.rm = TRUE)) %>%
+    dplyr::ungroup()
+
+ggplot(tmp, aes(group = state, color = state)) +
+    geom_line(aes(x = strt_cng, y = proxy_p)) +
+    geom_line(aes(x = strt_cng, y = proxy_a))

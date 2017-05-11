@@ -1,0 +1,532 @@
+---
+title: "Seeking a Spectral Signature for Gerrymandering"
+author: "Yoni Ackerman"
+header-includes:
+    - \usepackage{setspace}\doublespacing
+output: pdf_document
+fontsize: 11pt
+geometry: margin=1in
+bibliography: library.bib
+---
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE}
+library(TSA)
+library(ggplot2)
+library(reshape2)
+library(plyr)
+library(dplyr)
+library(signal)
+library(gridExtra)
+
+load("state_data.rda")
+load("congress_data.rda")
+load("regression_data.rda")
+```
+
+# Introduction
+
+In this paper I will be exploring the relationship between state elections and 
+district gerrymandering. Gerrymandering is the practice of carefully drawing state 
+voting districts to dilute the voting power of certain socioeconomic groups. In 
+particular, I would like to know if gerrymandering has a 
+spectral signature in the frequency domain. Because of its political nature, it 
+would be easy to abuse this topic, and let it devolve
+into a "data-driven" diatribe motivated by some underlying partisan agenda. 
+However, as I have not yet received checks from either George Soros or the Kochs, I
+will attemp to maintain a reasonable academic distance. I will have at my disposal 
+two main data sources: (1) House
+and Senate election results for all 50 states between the years 1939-2011, and (2) 
+shape files of every state congressional district for the same period. Both data  
+cleaning and transformation, which I will spend as little time describing as 
+possible. 
+
+With the datasets adequately prepped (an arduous task that I will omit from this 
+discussion), I will apply basic time series methods from [@Shumway2011], in the time domain and a few
+few from the frequency domain, such
+as the periodogram and spectrogram.  I am not looking
+for causal relationships, nor am I interested in uncovering a 'smoking gun' of American Election Engineering. 
+It should be obvious (should have been more obvious to me when designing this project) that elections and district 
+drawing are processes far more complex than these data can capture. It would be a mistake on my part to label all gerrymandering
+as "bad" or some electoral pattern (such as high volatility) as "good". To reiterate, my goal is only to search for frequency-based 
+similarities between state electoral records and relate them, when possible, to the presence of gerrymandering.
+
+# State Congress Political Leaning
+## data source: dataverse.harvard.edu
+
+These are yearly data collected from each state in the union between 1939 and 2015,
+inclusive. The available data are organized by year, state, and election year, and
+present 96 other cofactors related to that state's government (house, senate and govenor),
+in that year. I will almost exclusively use data on the number of Democrats and Republicans in the 
+State Houses during election years. The reason for this is the consistency of House elections. 
+All (around 200) seats in the House are open every two years (as opposed to the Senate, where only a handful 
+of seats reopen each election),thus election results give a much clearer snapshot of a state's political landscape. 
+To get an idea of what these data look like, we can examine how "right" or "left" each
+state's House. For each state $i$ at year $t$, define $H_{it} = \text{Number of House Republicans} - \text{Number of House Democrats}$. Figure 1 shows $H_t$ for all states.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Yearly State House Political Leaning"}
+col_diff <- function(df, col){
+    df[, paste0(col, "_diff")] <- c(NA, diff(df[,col]))
+    df
+}
+
+pData <- pData %>%
+    dplyr::mutate(
+        state = as.character(state),
+        ofCenter = hs_rep_in_sess - hs_dem_in_sess 
+        ) %>%
+    dplyr::filter(state != "Nebraska")
+
+pData <- ddply(pData, .(state), function(df){
+    df <- df %>% dplyr::arrange(year)
+    df <- col_diff(df, "ofCenter")
+})
+
+ggplot(pData %>% dplyr::filter(!is.na(ofCenter))) +
+    geom_line(aes(x = year, y = ofCenter, group = state, color = state)) +
+    theme(legend.position="none") +
+    xlab("Year") +
+    ylab("Political Leanings (Right = + and Left = -)")
+```
+
+Given the above plot, and a little thought about how American politics have changed 
+over time, it seems safe to assume that these time series are not stationary. To 
+address this, I deseason the data by taking first differences. Thus, for state $i$ 
+and year $t$ define $X_{it} = Y_{it} - Y_{i(t-1)}$. This variable describes the 
+change in state political leaning per year, and it will be the focus of much of 
+this project. We visualize $X_t$ for a few states in figure 2.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Yearly Change in State House Political Leaning (Blue is Senate, Red is House)"}
+selectStates <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state %in% c("Rhode Island", "Nevada", "Arkansas",
+                               "Alaska", "Nevada", "Montana",
+                               "California", "Illinois", "North Carolina",
+                               "Iowa")) %>%
+    dplyr::filter(!is.na(sen_of_center))
+                  
+ggplot(selectStates %>% dplyr::filter(!is.na(hs_of_center_diff) &
+                                      !is.na(sen_of_center_diff)), 
+    aes(x = year)) +
+    geom_line(aes(y = hs_of_center_diff),
+              color = "red", linetype = "solid") +
+    geom_line(aes(y = sen_of_center_diff),
+              color = "blue", linetype = "solid") +
+        facet_wrap(~state) +
+    xlab("Year") +
+    ylab("Change in Political Leaning")
+```
+
+The first thing to do with these data is to examine the linear dependence of
+the $X_t$ on their lagged values. So I proceed by calculating the autocovariances 
+for each $X_t$, as well as the equivalent time series for the state senates (just 
+for comparison). The results are summarized in figure 3. 
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Autocovariance Boxplots"}
+acfData <- ddply(pData, .(state), function(dat){
+    ts <- dat %>%
+        dplyr::arrange(year) %>%
+        dplyr::filter(hs_prop_up != 0)
+    sen_acf <- acf(na.omit(diff(ts$sen_of_center)), plot = FALSE)
+    hs_acf <- acf(na.omit(diff(ts$hs_of_center)), plot = FALSE)
+    sen_hs_ccf <- ccf(na.omit(diff(ts$hs_of_center)),
+                      na.omit(diff(ts$sen_of_center)),
+                      plot = FALSE)
+    types <- rep(c("Senate ACF", "House ACF", "Cross Correlation"),
+                 c(length(sen_acf$lag),
+                   length(hs_acf$lag),
+                   length(sen_hs_ccf$lag)))
+    data.frame(state = unique(dat$state),
+               type =  types,
+               lag = c(sen_acf$lag, hs_acf$lag, sen_hs_ccf$lag),
+               acf = c(sen_acf$acf, hs_acf$acf, sen_hs_ccf$acf),
+               sd_line = 1.96 / sqrt(length(na.omit(ts$hs_of_center_dif)))
+               )
+})
+
+ggplot(acfData, aes(x = lag, y = acf, group = lag)) +
+    geom_boxplot() +
+    geom_hline(aes(yintercept = -min(sd_line)), linetype = "dashed",
+               color = "blue") +
+    geom_hline(aes(yintercept = min(sd_line)), linetype = "dashed",
+               color = "blue") +
+    facet_grid(~type, scales = "free")
+```
+
+Each box plot represents the interquartile range (plus max and min) of all states' 
+ACF values at the corresponding lag. The blue line represents a 95% confidence interval for significance. 
+There are only two lags which are consistently significant across multiple states (not necessarily all of them): lag 1 in the House plot and lag 0 in the crosscorrelation plot. House elections occur every two years and non-election year data was omitted. This means that many states have a significant, negative correlation in there House voting patterns from election to election. That is, many states have consistently flip-flopped Republican to Democrat and vice versa every election.
+
+Next we look at the State Election data in the frequency domain, the ultimate goal
+being to find groups of frequencies correlated with the gerrymanding index (to be described later). State periodograms are
+shown in figure 4. 
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Select State Periodograms"}
+df <- pData %>%
+    dplyr::filter(state %in% c("Rhode Island", "Nevada", "Arkansas",
+                               "Alaska", "Nevada", "Montana",
+                               "California", "Illinois", "North Carolina",
+                               "Iowa"))
+pgrams <- ddply(df, .(state), function(dat){
+    pdg.dat <- periodogram(y = diff(na.omit(dat$hs_of_center)), plot = FALSE)
+    data.frame(state = unique(dat$state),
+               freq = pdg.dat$freq,
+               spec = pdg.dat$spec)
+})
+
+ggplot(pgrams, aes(x = freq, y = spec)) +
+    geom_line() +
+    xlab("frequency") +
+    ylab("spectrum") +
+    facet_wrap(~state)
+```
+
+Just like the original first-difference data, state periodograms vary widely. They
+are determined not just by fickle (if not random) voter behavior, but also by 
+complex historical events. Because of this, it does not seem reasonble to expect
+to see the effects of redistricting (which changes every 10 years) in state 
+periodograms. Instead, we should be looking at time series on the time-scale that
+redistricting occurs. The tool that will help us to do so is the spectrogram. The figures 5, 6, and 7 
+show spectrograms for a few states.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Time Series and Spectrogram of California"}
+X_t <- ts(diff(reg.data[["California"]]$result))
+par(mfrow=c(1,2))
+plot(X_t)
+specgram(X_t, n = 10, overlap = 9, Fs = 1)
+```
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Time Series and Spectrogram of Iowa"}
+X_t <- ts(diff(reg.data[["Iowa"]]$result))
+par(mfrow=c(1,2))
+plot(X_t)
+specgram(X_t, n = 10, overlap = 9, Fs = 1)
+```
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Time Series and Spectrogram of Illinois"}
+X_t <- ts(diff(reg.data[["Illinois"]]$result))
+par(mfrow=c(1,2))
+plot(X_t)
+specgram(X_t, n = 10, overlap = 9, Fs = 1)
+```
+
+Before moving to the gerrymandering data, there is one last perspective from which I looked at the state election data: potential functions. For this approach, I follow the procedure layed out in [@Brillinger2015]. Going back to the original time series $H_t$ of state house data, and adding in its senate equivalet $S_t$, I look at the trajectory of $(x_t,y_t) = (H_t, S_t)$ for each state. Using these data and their
+first differences, I estimate the  state's potential function, $P:\mathbb{R}^2\rightarrow\mathbb{R}$, by assuming the form:
+
+$$ P(x,y) = \beta_1 x + \beta_2 y + \beta_3 x^2 + \beta_4 xy + \beta_5 y^2 + \beta_6 x^3 + \beta_7 x^2y + \beta_8 xy^2 + \beta_9 y^3 $$ 
+
+which as has gradient:
+
+$$
+\begin{bmatrix} 
+1 & 0 & 2x & y & 0 & 3x^2 & 2xy & y^2 & 0 \\
+0 & 1 & 0 & x & 2y & 0 & x^2 & 2xy & 3y^2
+\end{bmatrix}
+$$
+
+multiplied by:
+
+$$
+\begin{bmatrix} 
+\beta_1 & \beta_2 & \beta_3 & \beta_4 & \beta_5 & \beta_6 & \beta_7 & \beta_8 & \beta_9
+\end{bmatrix}^T
+$$
+
+Then using the model $$r(t_{i+1}) - r(t_i) \approx \nabla P(r(t_i), t_i)(t_{i+1} - t_i) + \Sigma(r(t_i), t_i)\textbf{Z}_i\sqrt{t_{i+1} - t_i} $$ I performed a linear regresson on the first differences of the $(x_t, y_t)$ trajectories to estimate the $\beta$ vector.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE}
+rm(list = ls())
+
+load("state_data.rda")
+load("congress_data.rda")
+load("regression_data.rda")
+
+selectStates <- pData %>%
+    dplyr::arrange(year) %>%
+    dplyr::filter(state %in% c("California", "Illinois",
+                               "North Carolina", "Iowa")) %>%
+    dplyr::select(state, sen_of_center, hs_of_center,
+                  year, election_year)
+
+selectStates <- ddply(selectStates, .(state), function(sdf){
+    sdf$diff_hs <- c(NA, diff(sdf$hs_of_center))
+    sdf$diff_sen <- c(NA, diff(sdf$sen_of_center))
+    sdf$dt <- c(NA, diff(sdf$year))
+    sdf
+})
+
+## form the dataset:
+grad_potential <- function(x, y){
+    row1 <- data.frame(1, 0, 2*x, y, 0, 3*x^2, x*y, y^2, 0)
+    colnames(row1) <- paste0("x", 1:9)
+    row2 <- data.frame(0, 1, 0, x, 2*y, 0, x^2, 2*x*y, 3*y^2)
+    colnames(row2) <- paste0("x", 1:9)
+    rbind(row1, row2)
+}
+
+potential <- function(x, y){
+    tmp <- list(x, y, x^2, x*y, y^2, x^3, x^2 * y, x*y^2, y^3)
+    do.call(cbind, tmp)
+}
+
+YX <- ldply(1:nrow(selectStates), function(i){
+    row <- selectStates[i,]
+    grad_row <- grad_potential(row$hs_of_center,
+                               row$sen_of_center)
+    grad_row$y <- c(row$diff_hs, row$diff_sen)
+    grad_row$State <- row$state
+    grad_row$dt <- row$dt
+    grad_row
+})
+
+## run linear regression
+grid <- expand.grid(x = -150:150, y = -70:70)
+p_vals <- potential(grid$x, grid$y)
+
+reg <- ddply(YX, .(State), function(df){
+    i <- is.na(df$y)
+    X <- as.matrix(df[!i, paste0("x",1:9)])
+    Y <- as.matrix(df[!i, "y"])
+    beta <- solve(t(X) %*% X) %*% t(X) %*% Y
+    p <- p_vals %*% beta
+    grid$potential <- as.vector(p)
+    grid
+})
+
+selectStates <- selectStates %>%
+                dplyr::rename(State = state)
+```
+
+```{r,echo = FALSE, message = FALSE, warn = FALSE, fig.width = 8, fig.height = 8, fig.cap = "Potential functions and trajectories for selected states"}
+tmp.p <- reg %>% dplyr::filter(State == "Iowa")
+tmp.s <- selectStates %>% dplyr::filter(State == "Iowa")
+p1 <- ggplot() +
+       geom_tile(data = tmp.p, aes(x = x, y = y, fill = potential)) +
+       geom_line(data = tmp.s, aes(x = hs_of_center, y = sen_of_center), color = "white") +
+       xlab("House Political Leaning") +
+       ylab("Senate Political Leaning") +
+       guides(fill=guide_legend(title = "Potential")) +
+       ggtitle("Iowa Potential")
+
+tmp.p <- reg %>% dplyr::filter(State == "Illinois")
+tmp.s <- selectStates %>% dplyr::filter(State == "Illinois")
+p2 <- ggplot() +
+       geom_tile(data = tmp.p, aes(x = x, y = y, fill = potential)) +
+       geom_line(data = tmp.s, aes(x = hs_of_center, y = sen_of_center), color = "white") +
+       xlab("House Political Leaning") +
+       ylab("Senate Political Leaning") +
+       guides(fill=guide_legend(title = "Potential")) +
+       ggtitle("Illinois Potential")
+
+tmp.p <- reg %>% dplyr::filter(State == "California")
+tmp.s <- selectStates %>% dplyr::filter(State == "California")
+p3 <- ggplot() +
+       geom_tile(data = tmp.p, aes(x = x, y = y, fill = potential)) +
+       geom_line(data = tmp.s, aes(x = hs_of_center, y = sen_of_center), color = "white") +
+       xlab("House Political Leaning") +
+       ylab("Senate Political Leaning") +
+       guides(fill=guide_legend(title = "Potential")) +
+       ggtitle("California Potential")
+
+tmp.p <- reg %>% dplyr::filter(State == "North Carolina")
+tmp.s <- selectStates %>% dplyr::filter(State == "North Carolina")
+p4 <- ggplot() +
+       geom_tile(data = tmp.p, aes(x = x, y = y, fill = potential)) +
+       geom_line(data = tmp.s, aes(x = hs_of_center, y = sen_of_center), color = "white") +
+       xlab("House Political Leaning") +
+       ylab("Senate Political Leaning") +
+       guides(fill=guide_legend(title = "Potential")) +
+       ggtitle("North Carolina Potential")
+
+grid.arrange(p1, p2, p3, p4, nrow = 2, ncol = 2)
+```
+
+Plots 8-11 are approximations to the "Political Landscape" of each state. It is interesting to see 
+how different these potentials are. In particular, California's trajectory appears to exist on a relatively 
+flat potential surface, while the other three state trajectories are on more undulating potential surfaces. 
+If I had more time, I would like to incorporate the gerrymandering data into the potential function's
+regression as a dampening effect and examine the differences between the two results. 
+(Note, the banding on the images is an artifact from the plotting tool that was used.) 
+
+The next step is to associate the spectra at each time interval with the degree of gerrymandering
+in that interval, and by insodoing, find some signals. To do this, we should first have a look at
+the gerrymandering data.
+
+# Gerrymandering Data
+## data source: cdmaps.polisci.ucla.edu
+
+This dataset began as a set of shape files describing the spatial boundaries for every congressional
+district in the United States since the 1800's. I calculated each state's gerrymandering index in a given
+year $t$ as follows:
+
+$$g_{s,t} = \frac{\sum_{d\in\text{Districts}} h_{d,t}}{\sum_{d\in\text{Districts}} a_{d,t}}$$
+
+Where $g_s$ is the gerrymandering index for state $s$, $h_d$ is the area of the convex hull of
+district $d$, and $a_d$ is the area of district $d$. Figure 9 shows time series of 
+this variable.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE}
+ger.data <- ldply(names(reg.data), function(state){
+    df <- reg.data[[state]]
+    data.frame(State = state,
+               GI = df$Ger.Index[-1],
+               res = diff(df$result),
+               t = 1:(nrow(df) - 1))
+})
+
+tmp <- ger.data %>% dplyr::filter(State %in% c("Rhode Island", "Nevada", "Arkansas",
+                               "Alaska", "Nevada", "Montana",
+                               "California", "Illinois", "North Carolina",
+                               "Iowa") & !is.na(GI))
+```
+
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Time Series of Gerrymandering Index for select States"}
+ggplot(tmp, 
+    aes(x = t, y = GI, group = State, color = State)) +
+    geom_line() +
+    xlab("State elections since 1939") +
+    ylab("Gerrymandering Index") +
+    guides(color=guide_legend(title = "State"))
+
+```
+
+Technically, these data should be step functions that change every 5 elections (districts are redrawn
+every 10 years). A couple of things could be behind the discrepancies: 1) special redistricting that I am
+not aware of or, more likely, 2) something changed with the data-collection, measurement, or input 
+processes behind these data. Either way, I will proceed with the data as they are - there simply wasn't
+time to go digging to deep.
+
+Figure 10 shows the empirical distribution of gerrymandering indicies. This is what was to be expected: the distribution of gerrymandering index has shifted to the rightover time.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Empirical Distribution of Gerrymandering Index"}
+ggplot(ger.data %>% dplyr::filter(!is.na(GI) & t < 35), 
+    aes(x = GI, group = t, color = t, fill = t)) +
+    geom_density(alpha = .5) +
+    xlab("Gerrymandering Index") +
+    ylab("Density") +
+    guides(color = FALSE,
+           fill = guide_legend(title = "Time"))
+```
+
+# Combining The Gerrymandering Index with Election Data
+
+
+I first plotted gerrymandering index against the first-differenced election data, as shown in figure 11. I am tempted to see a slight trend in this data: as gerrymandering increases, the
+variance of the first differences decreases. This would make sense, as the point of gerrymandering is often to create "safe seats". Thus, the more (nefarious) gerrymandering a state experiences, the less we would expect to see political change. To explore, I binned the data by .125-width bins, and found the standard deviation of each bin. The resulting plot is shown in figure 12.
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Gerrymandering vs First Differences of House Elections (Colors indicate individual states)"}
+ggplot(ger.data %>% dplyr::filter(!is.na(GI) & !is.na(res)), 
+    aes(x = GI, y = res)) +
+    geom_point(aes(color = State)) +
+    xlab("Gerrymandering Index") +
+    ylab("House Turnover (Left (-) / Right (+) of Center)") +
+    guides(color = FALSE)
+```
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 5, fig.height = 3, fig.cap = "Gerrymandering index vs Standard Deviation of Change in Political leaning."}
+
+tmp <- ger.data %>% dplyr::filter(!is.na(GI) & !is.na(res)) %>% 
+                    dplyr::filter(GI < 2) %>%
+                    dplyr::mutate(GIgrp = ifelse(GI < 1.125, 1, 
+                                          ifelse(GI >= 1.125 & GI < 1.25, 1.125,
+                                          ifelse(GI >= 1.25 & GI < 1.375, 1.25,
+                                          ifelse(GI >= 1.376 & GI < 1.5, 1.375,
+                                          ifelse(GI >= 1.5 & GI < 1.625, 1.5,
+                                          ifelse(GI >= 1.625 & GI < 1.75, 1.625,
+                                          ifelse(GI >= 1.75 & GI < 1.875, 1.75,
+                                          ifelse(GI >= 1.875 & GI < 2, 1.875, 2))))))))) %>%
+		    ## dplyr::mutate(GIgrp = round(GI, digits = 2)) %>%
+                    dplyr::group_by(GIgrp) %>%
+                    dplyr::summarise(grpSD = sd(res)) %>%
+                    dplyr::ungroup()
+
+ggplot(tmp, aes(x = GIgrp, y = grpSD)) +
+    geom_bar(stat = "identity") +
+    xlab("Rounded Gerrymandering Index") +
+    ylab("Standard Deviation")
+```
+
+Given the figure 12 results, the trend appears rather anomalous - the high variance bins do not appear indicative
+of an overall trend. If I had more time and space, I would want to explore the states that exhibit high variance
+even in the presense of high gerrymandering. My theory is that one party managed to gain enough political
+control (not by overwhelming physical presence, but by influence and wiles) to allow them to re-write the
+entire district map and thereby allow a sea change of sets won to their party at the time of the next election. 
+Should this be the case, we'd expect a single election of high turnover, followed by an extended period of
+little exchange between parties.
+
+# Is there a spectral signature of gerrymandering?
+
+The following final analysis is my attempt to explore my overall question: does gerrymandering have
+a particular frequency signature? By that I mean, do certain frequencies appear/disappear as the
+gerrymandering index of a state changes? To explore this question statistically, I followed the following
+steps:
+
+1) For each state, I calculated the spectrogram of $X_t$ using a 10-election window with an overlap
+   of 3.
+2) I then record the periodogram of each window along with that window's left-most time point, as
+   well as the gerrymandering index (or average of gerrymandering indices, if the window extends over
+   two re-districting periods) and the state associated with that window. I keep the recorded data
+   in an R data.frame.
+3) I then calculate the euclidean distances between all the rows of the data.frame (excluding the 
+   columns indicating state and gerrymandering index). 
+4) I then visualize these distances by performing multi-dimensional scaling on the distance matrix
+   to find a set of points in $\mathbb{R}^2$ that faithfully captures the distances between the
+   rows. In this visualization, each point represents the periodogram of a window from some state's
+   $X_t$ series. Thus, I can also associate each point with a gerrymandering index and state.
+
+The output of this procedure is shown in figure 13. Unfortunately, it doesn't say much. I was hoping
+to see clusters of points with similar sizes (gerrymandering indices), however there is no evidence
+of such a clear pattern. Instead, it looks like a host of varying gerrymandering indices can be associated
+with quite similar frequency patterns. Should I have more time/space, I would repeat this analysis with
+a variety of window sizes and overlaps, and further try to cluster the results both by gerrymandering
+index and by spectral density. 
+
+```{r, echo = FALSE, message = FALSE, warn = FALSE, fig.width = 6, fig.height = 3, fig.cap = "2D projection of frequency distance"}
+spec.data <- ldply(names(reg.data), function(state){
+    spgrm <- specgram(diff(reg.data[[state]]$result), n = 10,
+                         overlap = 3, Fs = 1)
+    if(length(spgrm$t) != 4){
+        tmp <- data.frame(State = state, t = NA, as.list(rep(NA, 4)))
+        colnames(tmp) <- c("State", "t", paste0("freq", 1:4))
+        tmp
+    } else {
+        spec.data <- ldply(1:length(spgrm$t), function(t){
+        spec <- Mod(spgrm$S[,t])
+        time <- spgrm$t[t]
+        tmp <- data.frame(State = state, t = time, as.list(spec))
+        colnames(tmp) <- c("State", "t", paste0("freq", 1:length(spec)))
+        tmp
+    })
+    }
+}, .inform = TRUE)
+
+spec.data <- left_join(spec.data, ger.data, by = c("State", "t"))
+
+spec.data <- spec.data[complete.cases(spec.data),]
+
+spec.dist <- dist(spec.data[,paste0("freq", 1:5)])
+
+fit <- cmdscale(spec.dist, eig=TRUE, k=2)
+x <- fit$points[,1]
+y <- fit$points[,2]
+
+spec.mds <- data.frame(State = spec.data$State, GI = spec.data$GI, X = x, Y = y)
+
+ggplot(spec.mds, aes(x = X, y = Y, color = State, size = GI)) +
+   geom_point() +
+   guides(size = guide_legend(title = "GI"),
+          color = FALSE)
+```
+
+# Conclusion
+
+It is very unlikely that a universal effect of gerrymandering can be seen in the spectral
+density of $X_t$ - certainly, my analysis didn't discover one. One major obstacle that I witnessed
+in my analysis was the vagueness of the gerrymandering index. Each state
+possess its own complex political landscape based on the location, culture, and economy
+of that state. To say that the convexity of a district is representative of the same political intent across
+all states is simplistic. That is, a state's decision to redraw a district to have a non-convex shape
+does not necessarily imply malicious political intent. Without this direct association, there was just too
+much noise in the gerrymandering data for my analysis to find a signal. 
+
+# References

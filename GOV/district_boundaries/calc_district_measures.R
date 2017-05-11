@@ -15,7 +15,8 @@ dData <- ldply(shps, function(shp){
                           id = x$ID,
                           district = x$DISTRICT,
                           strt_cng = x$STARTCONG,
-                          end_cng = x$ENDCONG)
+                          end_cng = x$ENDCONG,
+                          perimeter = geosphere::perimeter(x))
 
     ## some of the polygons are a "self intersecting"
     x <- clean_shp(x)
@@ -32,17 +33,12 @@ dData <- ldply(shps, function(shp){
     x$hrat <- x$hull / x$area
 
     ## perimeter based measure
-    x$perimeter <- perimeter(x)
-    x$prat <- x$perimeter / (4 * sqrt(x$area))
-
     data.frame(shpData,
                area = x$area,
-               perimeter = x$perimeter,
-               perimeter_ratio = x$prat,
                hull = x$hull,
                hull_ratio = x$hrat
                )
     
-}) ## , .progress = "text"
+}, .progress = "text")
 
 save(dData, file = "dData.rda")
