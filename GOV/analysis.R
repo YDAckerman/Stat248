@@ -173,7 +173,7 @@ tmp <- specgram(diff(reg.data[["Texas"]]$result), n = 10, overlap = 9, Fs = 1)
 
 
 ########################################
-## TODO finish spectral mds
+##  spectral mds
 ########################################
 spec.data <- ldply(names(reg.data), function(state){
     spgrm <- specgram(diff(reg.data[[state]]$result), n = 10,
@@ -209,20 +209,21 @@ ggplot(spec.mds, aes(x = X, y = Y, color = State, size = GI)) +
    geom_point() +
    theme(legend.position="none")
 
-##############################
-##############################
+############################################################
+## old but might use later: spectral boxplots
+############################################################
 
-pdg.data <- ddply(pData, .(state), function(df){
-    pdg.dat <- periodogram(y = diff(na.omit(df$hs_of_center)), plot = FALSE)
-    data.frame(state = unique(df$state), freq = pdg.dat$freq,
-               spec = pdg.dat$spec)
-})
+## pdg.data <- ddply(pData, .(state), function(df){
+##     pdg.dat <- periodogram(y = diff(na.omit(df$hs_of_center)), plot = FALSE)
+##     data.frame(state = unique(df$state), freq = pdg.dat$freq,
+##                spec = pdg.dat$spec)
+## })
 
-ggplot(pdg.data, aes(x = freq, y = spec, group = freq)) +
-    geom_boxplot()
+## ggplot(pdg.data, aes(x = freq, y = spec, group = freq)) +
+##     geom_boxplot()
 
-ggplot(pdg.data, aes(x = freq, y = spec, color = state)) +
-    geom_point()
+## ggplot(pdg.data, aes(x = freq, y = spec, color = state)) +
+##     geom_point()
 
 ########################
 ## Probing for non iid
@@ -282,9 +283,6 @@ cData <- cData[,unlist(llply(cData, function(col){all(is.na(col))}))]
 dists <- dist(cData[,-1])
 heatmap(as.matrix(dists))
 
-
-
-
 ##############################
 ## coherence
 ##############################
@@ -331,17 +329,11 @@ ggplot(coh.data %>%
            size = (ger1 - ger2)^2, color = states)) +
                geom_smooth()
 
-## try 4 models for prediction: 
-## 1) weighted least squares
-## 2) gls
-## 3) arima
-## 4) glm (with family = binomial)
-
-## let's just do california:
-
 ###################################
 ## Estimating a potential function
 ###################################
+
+## Limit and clean the data
 
 selectStates <- pData %>%
     dplyr::arrange(year) %>%
@@ -357,6 +349,8 @@ selectStates <- ddply(selectStates, .(state), function(sdf){
     sdf
 })
 
+## make sure it all looks right
+
 ggplot(selectStates, aes(x = sen_of_center, y = hs_of_center)) +
     geom_line() +
     facet_wrap(~state)
@@ -365,7 +359,7 @@ ggplot(selectStates, aes(x = diff_sen, y = diff_hs)) +
     geom_line() +
     facet_wrap(~state)
 
-## form the dataset:
+## functions to help form the dataset
 grad_potential <- function(x, y){
     row1 <- data.frame(1, 0, 2*x, y, 0, 3*x^2, x*y, y^2, 0)
     colnames(row1) <- paste0("x", 1:9)
@@ -379,6 +373,7 @@ potential <- function(x, y){
     do.call(cbind, tmp)
 }
 
+## form the dataset:
 YX <- ldply(1:nrow(selectStates), function(i){
     row <- selectStates[i,]
     grad_row <- grad_potential(row$hs_of_center,
@@ -389,7 +384,7 @@ YX <- ldply(1:nrow(selectStates), function(i){
     grad_row
 })
 
-## run linear regression
+## run linear regression to fit potential
 grid <- expand.grid(x = -100:100, y = -50:50)
 p_vals <- potential(grid$x, grid$y)
 
